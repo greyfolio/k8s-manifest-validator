@@ -81,8 +81,16 @@ def plain(node: Any) -> Any:
         return {str(k): plain(v) for k, v in node.items()}
     if isinstance(node, (list, tuple)):
         return [plain(v) for v in node]
-    if isinstance(node, (str, bool, int, float)) or node is None:
-        return node
+    if isinstance(node, str):
+        return str(node)
+    if isinstance(node, bool):
+        return bool(node)
+    if isinstance(node, int):
+        return int(node)
+    if isinstance(node, float):
+        return float(node)
+    if node is None:
+        return None
     return str(node)
 
 
