@@ -85,7 +85,7 @@ def _run_kubeconform(directory: Path, mapping: dict[str, TempFile], schema_direc
     findings = []
     seen = set()
     for resource in output["resources"]:
-        status = str(resource.get("status", "")).upper()
+        status = str(resource.get("status", "")).removeprefix("status").upper()
         tmp = _lookup_temp(mapping, resource.get("filename", ""))
         if tmp is None:
             findings.append(_exception("kubeconform", ValueError(
