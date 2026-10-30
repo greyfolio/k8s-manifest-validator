@@ -80,8 +80,8 @@ def extract_openapi_definition(spec: dict, definition_name: str) -> dict:
             The `properties` mapping is not itself a schema object.
             """
             if isinstance(node, list):
-                 for value in node:
-                     refs(value)
+                for value in node:
+                    refs(value)
                 return
             if not isinstance(node, dict):
                 return
