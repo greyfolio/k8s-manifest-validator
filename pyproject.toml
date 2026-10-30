@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "k8s-manifest-validator"
+version = "0.1.0"
+description = "Validate Kubernetes manifests against versioned K8s/Gateway API schemas and Trivy policies"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["ruamel.yaml>=0.18,<0.20", "PyYAML>=6,<7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "jsonschema>=4"]
+
+[project.scripts]
+k8s-manifest-validator = "k8s_manifest_validator.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

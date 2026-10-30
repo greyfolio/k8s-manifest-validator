@@ -1,0 +1,30 @@
+# Illustrative environment mappings: replace with the versions installed by your platform.
+targets:
+  - name: k8s-1.31-gateway-1.2
+    kubernetes: "1.31.0"
+    gatewayAPI: ["1.2.1"]
+  - name: k8s-1.31-gateway-1.3
+    kubernetes: "1.31.0"
+    gatewayAPI: ["1.3.0"]
+  - name: k8s-1.32-gateway-1.3
+    kubernetes: "1.32.0"
+    gatewayAPI: ["1.3.0"]
+
+trivy:
+  enabled: true
+  failOn: HIGH
+  # customChecks:
+  #   - ./rego-policies
+
+# Optional: add more groups to the Kubernetes-owned API whitelist.
+# additionalBuiltinGroups: ["example.k8s.io"]
+
+# Optional: point at exact vendor-installed Gateway API Standard CRD bundles.
+# gatewayBundles:
+#   "1.3.0": ./vendor/standard-install.yaml
+
+# Optional tool binary paths and subprocess timeout:
+# tools:
+#   kubeconform: kubeconform
+#   trivy: trivy
+#   timeoutSeconds: 300
