@@ -54,3 +54,59 @@ def test_bad_channel_rejected(tmp_path, gateway_bundle):
     gateway_bundle.write_text(gateway_bundle.read_text().replace("channel: standard", "channel: experimental"))
     with pytest.raises(SchemaFetchError):
         SchemaCache(tmp_path / "c", gateway_bundles={"1.3.0": gateway_bundle}).gateway_schemas("1.3.0")
+
+
+def test_extract_openapi_definition_resolves_transitive_and_recursive_refs():
+    from k8s_manifest_validator.schemas import extract_openapi_definition
+    spec = {"definitions": {
+        "Root": {"type": "object", "properties": {"spec": {"$ref": "#/definitions/Child"}}},
+        "Child": {"type": "object", "properties": {"next": {"$ref": "#/definitions/Child"}}},
+        "Unused": {"type": "object"},
+    }}
+    result = extract_openapi_definition(spec, "Root")
+    assert result["properties"]["spec"]["$ref"] == "#/definitions/Child"
+    assert set(result["definitions"]) == {"Root", "Child"}
+    from jsonschema import Draft4Validator
+    Draft4Validator.check_schema(result)
+    assert Draft4Validator(result).is_valid({"spec": {"next": {}}})
+    assert not Draft4Validator(result).is_valid({"spec": {"next": "bad"}})
+
+
+def test_crd_schema_fallback_and_offline_cache(tmp_path, monkeypatch):
+    from k8s_manifest_validator import schemas
+    api = "apiextensions.k8s.io/v1"
+    name = "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinition"
+    calls = []
+
+    def download(url, max_bytes=32 * 1024 * 1024):
+        calls.append(url)
+        if "yannh/kubernetes-json-schema" in url:
+            raise SchemaMissingError("HTTP 404")
+        assert url.endswith("/v1.34.0/api/openapi-spec/swagger.json")
+        return json.dumps({"definitions": {name: {"type": "object", "properties": {
+            "spec": {"$ref": "#/definitions/Spec"}}},
+            "Spec": {"type": "object", "required": ["group"],
+                     "properties": {"group": {"type": "string"}}}}}).encode()
+
+    monkeypatch.setattr(schemas, "_download", download)
+    cache = SchemaCache(tmp_path / "cache")
+    output = cache.kubernetes_schema("1.34.0", "CustomResourceDefinition", api)
+    assert output.name == local_filename("CustomResourceDefinition", api)
+    from jsonschema import Draft4Validator
+    schema = json.loads(output.read_text())
+    Draft4Validator.check_schema(schema)
+    assert Draft4Validator(schema).is_valid({"spec": {"group": "example.com"}})
+    assert not Draft4Validator(schema).is_valid({"spec": {"group": 123}})
+    assert not Draft4Validator(schema).is_valid({"spec": {}})
+    assert len(calls) == 2
+    assert SchemaCache(tmp_path / "cache", offline=True).kubernetes_schema(
+        "1.34.0", "CustomResourceDefinition", api) == output
+
+
+def test_missing_other_schema_does_not_trigger_crd_fallback(tmp_path, monkeypatch):
+    from k8s_manifest_validator import schemas
+    def missing(url, max_bytes=32 * 1024 * 1024):
+        raise SchemaMissingError("HTTP 404")
+    monkeypatch.setattr(schemas, "_download", missing)
+    with pytest.raises(SchemaMissingError):
+        SchemaCache(tmp_path / "cache").kubernetes_schema("1.34.0", "Example", "example.com/v1")

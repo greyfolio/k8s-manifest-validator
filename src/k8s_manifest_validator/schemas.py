@@ -55,6 +55,46 @@ def _json_bytes(payload: dict) -> bytes:
     return (json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
 
 
+def extract_openapi_definition(spec: dict, definition_name: str) -> dict:
+    """Extract an OpenAPI v2 definition and its transitive local dependencies.
+
+    Keep refs inside #/definitions so Kubeconform can resolve them entirely
+    from this single file. Fail on unknown references instead of silently
+    weakening validation.
+    """
+    definitions = spec["definitions"]
+    included: dict[str, dict] = {}
+
+    def visit(name: str) -> None:
+        if name in included:
+            return
+        definition = definitions[name]  # A missing definition is an error.
+        if not isinstance(definition, dict):
+            raise TypeError(f"OpenAPI definition {name} is not an object")
+        included[name] = definition
+
+        def refs(node):
+            if isinstance(node, dict):
+                ref = node.get("$ref")
+                if ref is not None:
+                    prefix = "#/definitions/"
+                    if not isinstance(ref, str) or not ref.startswith(prefix):
+                        raise ValueError(f"unsupported OpenAPI reference: {ref!r}")
+                    visit(ref[len(prefix):])
+                for value in node.values():
+                    refs(value)
+            elif isinstance(node, list):
+                for value in node:
+                    refs(value)
+        refs(definition)
+
+    visit(definition_name)
+    root = deepcopy(included[definition_name])
+    root["$schema"] = "http://json-schema.org/draft-04/schema#"
+    root["definitions"] = included
+    return root
+
+
 def kube_filename(kind: str, api_version: str) -> str:
     """Match kubeconform/pkg/registry schemaPath() default registry filenames."""
     parts = api_version.split("/")
@@ -144,7 +184,27 @@ class SchemaCache:
             raise SchemaFetchError(f"uncached Kubernetes schema for {kind} {api_version} on {kubernetes_version}: {dest}")
         registry_file = kube_filename(kind, api_version)
         url = f"{K8S_BASE}/v{kubernetes_version}-standalone-strict/{registry_file}"
-        body = _download(url)
+        try:
+            body = _download(url)
+        except SchemaMissingError:
+            # The community registry omits CRDs even though they are a built-in API.
+            # Build the schema from the official, version-pinned Kubernetes OpenAPI.
+            if kind != "CustomResourceDefinition" or api_version != "apiextensions.k8s.io/v1":
+                raise
+            openapi_url = ("https://raw.githubusercontent.com/kubernetes/kubernetes/"
+                           f"v{kubernetes_version}/api/openapi-spec/swagger.json")
+            try:
+                spec = json.loads(_download(openapi_url, max_bytes=64 * 1024 * 1024))
+                schema = extract_openapi_definition(
+                    spec,
+                    "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinition",
+                )
+            except (ValueError, TypeError, KeyError) as exc:
+                raise SchemaFetchError(
+                    f"cannot extract CRD schema from Kubernetes {kubernetes_version} OpenAPI: {exc}"
+                ) from exc
+            _write_atomic(dest, _json_bytes(schema))
+            return dest
         try:
             parsed = json.loads(body)
             if not isinstance(parsed, dict):
