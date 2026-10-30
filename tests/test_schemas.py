@@ -110,3 +110,81 @@ def test_missing_other_schema_does_not_trigger_crd_fallback(tmp_path, monkeypatc
     monkeypatch.setattr(schemas, "_download", missing)
     with pytest.raises(SchemaMissingError):
         SchemaCache(tmp_path / "cache").kubernetes_schema("1.34.0", "Example", "example.com/v1")
+
+
+def test_extract_openapi_definition_literal_ref_property_and_data():
+    """Kubernetes JSONSchemaProps declares a field literally named '$ref'."""
+    from jsonschema import Draft4Validator
+    from k8s_manifest_validator.schemas import extract_openapi_definition
+
+    spec = {"definitions": {
+        "CRD": {"type": "object", "properties": {
+            "schema": {"$ref": "#/definitions/JSONSchemaProps"}}},
+        "JSONSchemaProps": {"type": "object", "properties": {
+            "$ref": {"type": "string"},
+            "properties": {"type": "object", "additionalProperties": {
+                "$ref": "#/definitions/JSONSchemaProps"}},
+            "example": {"type": "object", "default": {"$ref": "literal user data"}},
+        }},
+    }}
+    result = extract_openapi_definition(spec, "CRD")
+    assert set(result["definitions"]) == {"CRD", "JSONSchemaProps"}
+    assert result["definitions"]["JSONSchemaProps"]["properties"]["$ref"] == {"type": "string"}
+    Draft4Validator.check_schema(result)
+    assert Draft4Validator(result).is_valid({"schema": {"$ref": "sample"}})
+    assert not Draft4Validator(result).is_valid({"schema": {"$ref": 123}})
+
+
+def test_extract_openapi_definition_nested_schema_locations():
+    from k8s_manifest_validator.schemas import extract_openapi_definition
+
+    spec = {"definitions": {
+        "Root": {"allOf": [
+            {"anyOf": [{"$ref": "#/definitions/A"}]},
+            {"properties": {"items": {"type": "array", "items": {"$ref": "#/definitions/B"}}}},
+            {"patternProperties": {"^x-": {"$ref": "#/definitions/C"}}},
+            {"dependencies": {"someField": {"$ref": "#/definitions/D"}}},
+        ]},
+        "A": {"type": "string"},
+        "B": {"type": "integer"},
+        "C": {"type": "boolean"},
+        "D": {"type": "object"},
+    }}
+    result = extract_openapi_definition(spec, "Root")
+    assert set(result["definitions"]) == {"Root", "A", "B", "C", "D"}
+
+
+def test_extract_openapi_definition_rejects_nonlocal_ref():
+    from k8s_manifest_validator.schemas import extract_openapi_definition
+    spec = {"definitions": {"Root": {"properties": {
+        "spec": {"$ref": "https://example.com/schema.json"}}}}}
+    with pytest.raises(ValueError, match="unsupported OpenAPI reference"):
+        extract_openapi_definition(spec, "Root")
+
+
+def test_crd_schema_fallback_with_literal_ref_property(tmp_path, monkeypatch):
+    """Exercise the real schema cache's fallback path, without downloading."""
+    from jsonschema import Draft4Validator
+    from k8s_manifest_validator import schemas
+
+    name = "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinition"
+    swagger = {"definitions": {
+        name: {"type": "object", "properties": {
+            "spec": {"$ref": "#/definitions/JSONSchemaProps"}}},
+        "JSONSchemaProps": {"type": "object", "properties": {
+            "$ref": {"type": "string"},
+            "properties": {"type": "object", "additionalProperties": {
+                "$ref": "#/definitions/JSONSchemaProps"}}}},
+    }}
+    def download(url, max_bytes=32 * 1024 * 1024):
+        if "yannh/kubernetes-json-schema" in url:
+            raise SchemaMissingError("HTTP 404")
+        assert url.endswith("/v1.35.0/api/openapi-spec/swagger.json")
+        return json.dumps(swagger).encode()
+    monkeypatch.setattr(schemas, "_download", download)
+    file = SchemaCache(tmp_path / "cache").kubernetes_schema(
+        "1.35.0", "CustomResourceDefinition", "apiextensions.k8s.io/v1")
+    result = json.loads(file.read_text())
+    Draft4Validator.check_schema(result)
+    assert "JSONSchemaProps" in result["definitions"]
+    assert file.is_file()

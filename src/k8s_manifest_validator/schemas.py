@@ -74,18 +74,41 @@ def extract_openapi_definition(spec: dict, definition_name: str) -> dict:
         included[name] = definition
 
         def refs(node):
-            if isinstance(node, dict):
-                ref = node.get("$ref")
-                if ref is not None:
-                    prefix = "#/definitions/"
-                    if not isinstance(ref, str) or not ref.startswith(prefix):
-                        raise ValueError(f"unsupported OpenAPI reference: {ref!r}")
-                    visit(ref[len(prefix):])
-                for value in node.values():
-                    refs(value)
-            elif isinstance(node, list):
-                for value in node:
-                    refs(value)
+            """Visit only schema-valued keywords, not arbitrary objects.
+
+            JSONSchemaProps declares a property literally named "$ref".
+            The `properties` mapping is not itself a schema object.
+            """
+            if isinstance(node, list):
+                 for value in node:
+                     refs(value)
+                return
+            if not isinstance(node, dict):
+                return
+
+            ref = node.get("$ref")
+            if ref is not None:
+                prefix = "#/definitions/"
+                if not isinstance(ref, str) or not ref.startswith(prefix):
+                    raise ValueError(f"unsupported OpenAPI reference: {ref!r}")
+                visit(ref[len(prefix):])
+
+            # Mapping keys are property names, regexes, or definition names.
+            for key in ("properties", "patternProperties", "definitions"):
+                mapping = node.get(key)
+                if isinstance(mapping, dict):
+                    for schema in mapping.values():
+                        refs(schema)
+
+            for key in ("items", "additionalItems", "additionalProperties", "not"):
+                refs(node.get(key))
+            for key in ("allOf", "anyOf", "oneOf"):
+                refs(node.get(key))
+            dependencies = node.get("dependencies")
+            if isinstance(dependencies, dict):
+                for dependency in dependencies.values():
+                    if isinstance(dependency, dict):
+                        refs(dependency)
         refs(definition)
 
     visit(definition_name)
