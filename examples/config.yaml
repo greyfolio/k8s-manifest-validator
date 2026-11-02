@@ -12,7 +12,8 @@ targets:
 
 trivy:
   enabled: true
-  failOn: HIGH
+  failOn: ANY
+  compliance: k8s-pss-restricted-0.1
   # customChecks:
   #   - ./rego-policies
 

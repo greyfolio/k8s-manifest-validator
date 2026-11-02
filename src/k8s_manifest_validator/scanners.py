@@ -195,6 +195,8 @@ def trivy_findings(manifests: list[Manifest], config: Config, workspace: Path) -
         return []
     command = [config.trivy_bin, "config", "--format", "json", "--exit-code", "0",
                "--quiet"]
+    if config.trivy_compliance:
+        command += ["--compliance", config.trivy_compliance]
     if config.offline:
         command.append("--skip-check-update")
     for check in config.trivy_checks:
@@ -214,7 +216,11 @@ def trivy_findings(manifests: list[Manifest], config: Config, workspace: Path) -
     except (ValueError, TypeError) as exc:
         return [_exception("trivy", ValueError(f"invalid JSON output: {exc}; {result.stderr[:300]}"))]
     findings = []
-    for entry in output.get("Results") or []:
+    results = output.get("Results") or []
+    if config.trivy_compliance:
+        # Compliance JSON groups the usual per-target results under controls.
+        results = [entry for control in results for entry in control.get("Results") or []]
+    for entry in results:
         tmp = _lookup_temp(mapping, entry.get("Target", ""))
         for issue in entry.get("Misconfigurations") or []:
             if tmp is None:
@@ -243,9 +249,9 @@ def is_failure(finding: Finding, trivy_fail_on: str) -> bool:
         return True
     if trivy_fail_on == "NONE":
         return False
-    # UNKNOWN remains reportable but is only fatal if the policy specifically selects UNKNOWN.
-    if finding.severity == "UNKNOWN":
-        return trivy_fail_on == "UNKNOWN"
-    if trivy_fail_on == "UNKNOWN":
+    if trivy_fail_on == "ANY":
         return True
+    # UNKNOWN findings are reportable but do not meet a severity threshold.
+    if finding.severity == "UNKNOWN":
+        return False
     return SEVERITIES.index(finding.severity) >= SEVERITIES.index(trivy_fail_on)

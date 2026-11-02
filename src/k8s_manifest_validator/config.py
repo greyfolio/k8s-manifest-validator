@@ -24,6 +24,7 @@ class Config:
     additional_builtin_groups: set[str] = field(default_factory=set)
     trivy_enabled: bool = True
     trivy_fail_on: str = "HIGH"
+    trivy_compliance: str | None = None
     trivy_checks: list[str] = field(default_factory=list)
     kubeconform_bin: str = "kubeconform"
     trivy_bin: str = "trivy"
@@ -97,8 +98,11 @@ def load_config(path: Path, *, offline: bool = False, cache_dir: Path | None = N
         gateway_bundles[_version(version, "Gateway API version")] = p if p.is_absolute() else (path.parent / p).resolve()
     tri = data.get("trivy") or {}
     severity = str(tri.get("failOn", "HIGH")).upper()
-    if severity not in SEVERITIES and severity != "NONE":
-        raise ValueError(f"invalid Trivy failOn: {severity}")
+    if severity not in (*SEVERITIES[1:], "ANY", "NONE"):
+        raise ValueError(f"invalid Trivy failOn: {severity}; use ANY, LOW, MEDIUM, HIGH, CRITICAL or NONE")
+    compliance = tri.get("compliance")
+    if compliance is not None and (not isinstance(compliance, str) or not compliance.strip()):
+        raise ValueError("trivy.compliance must be a nonempty string")
     checks = tri.get("customChecks") or []
     if not isinstance(checks, list):
         raise ValueError("trivy.customChecks must be a list")
@@ -108,7 +112,7 @@ def load_config(path: Path, *, offline: bool = False, cache_dir: Path | None = N
                   gateway_bundles=gateway_bundles,
                   additional_builtin_groups=set(data.get("additionalBuiltinGroups") or []),
                   trivy_enabled=bool(tri.get("enabled", True)) and not no_trivy,
-                  trivy_fail_on=severity, trivy_checks=checks,
+                  trivy_fail_on=severity, trivy_checks=checks, trivy_compliance=compliance,
                   kubeconform_bin=str(opts.get("kubeconform", "kubeconform")),
                   trivy_bin=str(opts.get("trivy", "trivy")),
                   timeout_seconds=int(opts.get("timeoutSeconds", 300)))

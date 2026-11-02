@@ -37,7 +37,8 @@ targets:
     gatewayAPI: ["1.3.0"]
 trivy:
   enabled: true
-  failOn: HIGH # UNKNOWN, LOW, MEDIUM, HIGH, CRITICAL or NONE
+  failOn: ANY # ANY, LOW, MEDIUM, HIGH, CRITICAL or NONE
+  compliance: k8s-pss-restricted-0.1 # Optional; omit to run all checks
   # customChecks: ["./policies"]
 # cacheDir: ./.schema-cache
 # offline: false
@@ -49,6 +50,17 @@ trivy:
 #   trivy: trivy
 #   timeoutSeconds: 300
 ```
+
+`trivy.compliance` selects a Trivy compliance profile (for example,
+`k8s-pss-restricted-0.1` for Pod Security Standards Restricted). Omit it to scan
+with all default checks. Profile names and versions depend on the installed Trivy
+checks bundle. Findings retain their source locations in either mode.
+
+`failOn: ANY` fails on every Trivy finding, including severity `UNKNOWN`.
+Severity thresholds (`LOW` through `CRITICAL`) fail at or above that level and
+exclude `UNKNOWN`; `NONE` reports findings without failing on them. Replace the
+old `failOn: UNKNOWN` setting with `ANY`; `UNKNOWN` is no longer accepted as a
+policy value. The default remains `HIGH`.
 
 Alternatively, an older, compact map format is supported:
 

@@ -1,5 +1,6 @@
 import json
 import subprocess
+import pytest
 from pathlib import Path
 from k8s_manifest_validator.config import Config, Target
 from k8s_manifest_validator.inventory import load_manifests
@@ -51,17 +52,25 @@ def test_unsupported_gateway_kind(manifest_file, gateway_bundle, config, monkeyp
     assert len([f for f in findings if f.rule == "GATEWAY_GVK_UNAVAILABLE"]) == 2
 
 
-def test_trivy_line_mapping(manifest_file, config, monkeypatch, tmp_path):
+@pytest.mark.parametrize("compliance", [None, "k8s-pss-restricted-0.1"])
+def test_trivy_line_mapping(manifest_file, config, monkeypatch, tmp_path, compliance):
     from k8s_manifest_validator import scanners
     config.trivy_enabled = True
+    config.trivy_compliance = compliance
     manifests, _ = load_manifests(str(manifest_file), set())
     def fake_run(args, timeout):
         assert args[1] == "config"
         assert "--scanners" not in args  # `config` already scans misconfigurations.
+        if compliance:
+            assert args[args.index("--compliance") + 1] == compliance
+        else:
+            assert "--compliance" not in args
         src = next(Path(args[-1]).glob("*.yaml"))
         payload = {"Results": [{"Target": str(src), "Misconfigurations": [
             {"ID": "AVD-KSV-0001", "Severity": "HIGH", "Message": "Bad securityContext",
              "CauseMetadata": {"StartLine": 11}, "Resolution": "Fix it"}]}]}
+        if compliance:
+            payload = {"ID": compliance, "Results": [{"ID": "empty", "Results": None}, {"ID": "1", "Results": payload["Results"]}]}
         return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
     monkeypatch.setattr(scanners, "_run", fake_run)
     findings = trivy_findings(manifests, config, tmp_path / "work")
@@ -119,3 +128,16 @@ def test_gateway_without_bundle_in_one_target(tmp_path, gateway_bundle, config, 
     assert len(findings) == 1
     assert findings[0].rule == "GATEWAY_NOT_CONFIGURED"
     assert findings[0].affected_targets == ["no-gateway"]
+
+
+@pytest.mark.parametrize("severity", ["UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"])
+def test_any_and_none_trivy_policies(severity):
+    finding = Finding("test", "trivy", severity, "test")
+    assert is_failure(finding, "ANY")
+    assert not is_failure(finding, "NONE")
+    assert is_failure(finding, "HIGH") == (severity in ("HIGH", "CRITICAL"))
+
+
+def test_any_policy_preserves_scanner_error_and_schema_behavior():
+    assert not is_failure(Finding("test", "trivy", "ERROR", "test", category="scanner_error"), "ANY")
+    assert is_failure(Finding("test", "kubeconform", "ERROR", "test"), "NONE")
