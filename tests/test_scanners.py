@@ -57,6 +57,7 @@ def test_trivy_line_mapping(manifest_file, config, monkeypatch, tmp_path):
     manifests, _ = load_manifests(str(manifest_file), set())
     def fake_run(args, timeout):
         assert args[1] == "config"
+        assert "--scanners" not in args  # `config` already scans misconfigurations.
         src = next(Path(args[-1]).glob("*.yaml"))
         payload = {"Results": [{"Target": str(src), "Misconfigurations": [
             {"ID": "AVD-KSV-0001", "Severity": "HIGH", "Message": "Bad securityContext",
