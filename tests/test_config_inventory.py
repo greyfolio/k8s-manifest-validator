@@ -1,5 +1,6 @@
 from io import StringIO
 import sys
+import pytest
 from k8s_manifest_validator.config import load_config
 from k8s_manifest_validator.inventory import load_manifests, prerelease_findings
 from k8s_manifest_validator.models import Finding, merge_findings
@@ -76,3 +77,20 @@ def test_merge_version_only(config):
     merged = merge_findings([a, b])
     assert len(merged) == 1
     assert merged[0].affected_targets == ["ocp-a", "ocp-b"]
+
+
+@pytest.mark.parametrize("policy", ["ANY", "LOW", "MEDIUM", "HIGH", "CRITICAL", "NONE"])
+def test_trivy_policy_and_compliance(tmp_path, policy):
+    p = tmp_path / "config.yaml"
+    p.write_text(f'targets: [{{kubernetes: "1.31"}}]\ntrivy:\n  failOn: {policy.lower()}\n  compliance: k8s-pss-restricted-0.1\n')
+    config = load_config(p)
+    assert config.trivy_fail_on == policy
+    assert config.trivy_compliance == "k8s-pss-restricted-0.1"
+
+
+@pytest.mark.parametrize("setting", ['failOn: UNKNOWN', 'failOn: invalid', 'compliance: ""', 'compliance: []', 'compliance: true'])
+def test_invalid_trivy_settings(tmp_path, setting):
+    p = tmp_path / "config.yaml"
+    p.write_text(f'targets: [{{kubernetes: "1.31"}}]\ntrivy:\n  {setting}\n')
+    with pytest.raises(ValueError):
+        load_config(p)
