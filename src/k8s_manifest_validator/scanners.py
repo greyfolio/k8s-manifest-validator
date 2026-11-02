@@ -194,7 +194,7 @@ def trivy_findings(manifests: list[Manifest], config: Config, workspace: Path) -
     if not mapping:
         return []
     command = [config.trivy_bin, "config", "--format", "json", "--exit-code", "0",
-               "--scanners", "misconfig", "--quiet"]
+               "--quiet"]
     if config.offline:
         command.append("--skip-check-update")
     for check in config.trivy_checks:
